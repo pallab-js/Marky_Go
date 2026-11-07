@@ -40,12 +40,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Go vet
-        run: go vet ./...
-
-      - name: Go test
-        run: go test ./...
-
       - name: Frontend install
         working-directory: frontend
         run: npm ci
@@ -53,6 +47,12 @@ jobs:
       - name: Frontend build
         working-directory: frontend
         run: npm run build
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test ./...
 
       - name: Wails compile check
         run: |
