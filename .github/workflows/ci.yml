@@ -40,6 +40,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Generate Wails bindings
+        run: wails generate module -tags webkit2_41
+
       - name: Frontend install
         working-directory: frontend
         run: npm ci
@@ -55,6 +63,4 @@ jobs:
         run: go test ./...
 
       - name: Wails compile check
-        run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
-          wails build -m -skipbindings -tags webkit2_41 -o markvault-ci
+        run: wails build -m -skipbindings -tags webkit2_41 -o markvault-ci
