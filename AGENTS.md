@@ -2,7 +2,8 @@
 
 - Stack: Go + Wails v2 + React/TS (Vite) + SQLite (`modernc.org/sqlite`, FTS5). Markdown files in the selected vault are canonical; SQLite index/cache lives in XDG app data outside the vault.
 - Planning baseline: `/home/ubl/.local/share/kilo/plans/1794024561722-markvault-planning.md`.
-- No git repo/remote configured here. Do not add remote, commit, or push unless explicitly requested.
+- Git remote: `origin` → `https://github.com/pallab-js/Marky_Go.git` (default pushed branch: `master`). Do not add another remote, amend published history, or force-push unless explicitly requested.
+
 
 ## Validation commands
 
