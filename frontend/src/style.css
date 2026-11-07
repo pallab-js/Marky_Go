@@ -20,11 +20,14 @@ button {
 button:hover { border-color: #454552; }
 .app { height: 100%; display: flex; flex-direction: column; }
 .topbar {
-  display: grid; grid-template-columns: auto auto 1fr; gap: 12px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: #151518;
 }
 .brand { font-weight: 700; letter-spacing: 0.2px; }
-.meta { color: var(--muted); justify-self: end; font-size: 13px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.actions button { white-space: nowrap; }
+.meta { color: var(--muted); margin-left: auto; font-size: 13px; }
+
 .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px 1fr; }
 .sidebar { border-right: 1px solid var(--border); background: var(--panel); min-height: 0; overflow: auto; padding: 12px; }
 .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
