@@ -1,4 +1,5 @@
 import { AppInfo, CreateFolder, CreateNote, DeletePath, GetSettings, GetTree, Health, OpenVault, OpenVaultDialog, ReadNote, RebuildIndex, RenamePath, SaveConflictCopy, Search, UpdateSettings, WriteNote } from '../../wailsjs/go/app/App';
+
 import type { domain } from '../../wailsjs/go/models';
 
 export type Settings = domain.Settings;

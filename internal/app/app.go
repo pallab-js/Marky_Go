@@ -196,7 +196,12 @@ func (a *App) CreateNote(relPath, content string) (domain.NoteDocument, error) {
 	return doc, nil
 }
 
+func (a *App) CreateFolder(relPath string) error {
+	return a.vault.CreateFolder(relPath)
+}
+
 func (a *App) RenamePath(oldRel, newRel string) error {
+
 	if err := a.vault.RenamePath(oldRel, newRel); err != nil {
 		return err
 	}
