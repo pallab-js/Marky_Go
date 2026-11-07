@@ -40,6 +40,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
+      - name: Prepare frontend dist placeholder for Go embed
+        run: |
+          mkdir -p frontend/dist
+          printf '<!doctype html><html><body></body></html>\n' > frontend/dist/index.html
+
       - name: Install Wails CLI
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
