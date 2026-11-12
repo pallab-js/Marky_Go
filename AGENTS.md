@@ -11,6 +11,7 @@
 go vet ./...
 go test ./...
 cd frontend && npm run build
+cd frontend && npm run test:e2e   # headless browser e2e (mocks Wails bindings)
 # GUI-dependent: wails dev
 # Linux/Ubuntu 26.04 with webkit2gtk-4.1 may need:
 wails build -m -skipbindings -tags webkit2_41

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"markvault/internal/domain"
@@ -36,9 +37,10 @@ func New() *App {
 		}
 		root := a.vault.Root()
 		if root != "" {
-			rel := strings.TrimPrefix(ev.Path, root+"/")
-			if rel != ev.Path && strings.HasSuffix(strings.ToLower(rel), ".md") {
-				a.indexPath(rel)
+			rel, err := filepath.Rel(root, ev.Path)
+			inside := err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+			if inside && strings.HasSuffix(strings.ToLower(rel), ".md") {
+				a.indexPath(filepath.ToSlash(rel))
 			} else {
 				_ = a.RebuildIndex()
 			}
@@ -135,7 +137,6 @@ func (a *App) WriteNote(relPath, content, baseHash string, baseMtimeNs int64, li
 	}
 	return res, nil
 }
-
 
 func (a *App) SaveConflictCopy(relPath, content, lineEnding string) (domain.SaveResult, error) {
 	res, err := a.vault.SaveConflictCopy(relPath, content, lineEnding)

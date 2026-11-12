@@ -16,6 +16,11 @@ function safeHref(href?: string): string | undefined {
   return s;
 }
 
+function isRemoteImage(src: string): boolean {
+  const s = src.trim();
+  return /^(https?:)?\/\//i.test(s) || /^data:image\/(?:png|jpe?g|gif|webp);/i.test(s);
+}
+
 const components: Components = {
   a: ({ href, children, ...props }) => {
     const safe = safeHref(href);
@@ -26,7 +31,7 @@ const components: Components = {
     // Decision 13: local vault image rendering deferred; render non-dangerous remote/data-image only.
     const raw = typeof src === 'string' ? src : undefined;
     const safe = safeHref(raw);
-    if (!safe || safe.startsWith('/') || safe.startsWith('./') || safe.startsWith('../')) {
+    if (!safe || !isRemoteImage(safe)) {
       return <span className="deferred-image">[image: {alt || safe || 'local image rendering deferred'}]</span>;
     }
     return <img {...props} src={safe} alt={alt || ''} loading="lazy" />;

@@ -281,13 +281,13 @@ func (s *Service) Search(query string, opts domain.SearchOptions) ([]domain.Sear
 	match := normalizeFTSQuery(q)
 	rows, err := s.db.Query(`
 		SELECT n.rel_path, COALESCE(n.title,''), COALESCE(n.mtime_ns,0),
-		       snippet(notes_fts, 1, '[', ']', ' … ', 16),
+		       snippet(notes_fts, 1, ?, ?, ' … ', 16),
 		       bm25(notes_fts)
 		FROM notes_fts
 		JOIN notes n ON CAST(n.id AS TEXT) = notes_fts.note_id
 		WHERE notes_fts MATCH ? AND n.vault_id = ?
 		ORDER BY bm25(notes_fts)
-		LIMIT ?`, match, s.vaultID, limit)
+		LIMIT ?`, "\u0001", "\u0002", match, s.vaultID, limit)
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "fts5") || strings.Contains(msg, "syntax") || strings.Contains(msg, "match") || strings.Contains(msg, "unterminated") {
@@ -307,32 +307,109 @@ func (s *Service) Search(query string, opts domain.SearchOptions) ([]domain.Sear
 	return out, rows.Err()
 }
 
-// normalizeFTSQuery makes plain user input safer for FTS5 MATCH.
-// It preserves simple words/phrases and avoids common syntax errors from punctuation.
+// normalizeFTSQuery makes arbitrary user input safe for FTS5 MATCH.
+// Plain words and quoted phrases are wrapped as FTS phrases, and only the
+// uppercase boolean operators AND/OR/NOT/NEAR are passed through as syntax.
 func normalizeFTSQuery(q string) string {
-	// If user already used explicit FTS syntax characters/operators intentionally,
-	// pass through as-is to avoid breaking power use.
-	if strings.ContainsAny(q, `":*(){}^`) || strings.Contains(q, " AND ") || strings.Contains(q, " OR ") || strings.Contains(q, " NOT ") || strings.Contains(q, " NEAR ") {
+	q = strings.TrimSpace(q)
+	if q == "" {
 		return q
 	}
-	fields := strings.Fields(q)
-	if len(fields) == 0 {
-		return q
-	}
-	terms := make([]string, 0, len(fields))
-	for _, f := range fields {
-		// Strip characters that commonly break FTS5 while keeping meaningful text.
-		f = strings.Trim(f, ".,;!?[]<>/\\|=+-~")
-		if f == "" {
-			continue
+	tokens := tokenizeFTSQuery(q)
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if !t.quoted {
+			switch t.text {
+			case "AND", "OR", "NOT", "NEAR":
+				parts = append(parts, t.text)
+				continue
+			}
 		}
-		f = strings.ReplaceAll(f, `"`, `""`)
-		// Quote each term to treat punctuation-like chars safely.
-		terms = append(terms, `"`+f+`"`)
+		parts = append(parts, quoteFTSTerm(t.text))
 	}
-	if len(terms) == 0 {
-		return q
+	// Drop leading/trailing operators and collapse doubled operators so a
+	// partially typed query such as "hello AND" never reaches FTS5 as invalid
+	// syntax.
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if isFTSOperator(p) {
+			if len(out) == 0 {
+				continue
+			}
+			if isFTSOperator(out[len(out)-1]) {
+				out[len(out)-1] = p
+				continue
+			}
+		}
+		out = append(out, p)
 	}
-	return strings.Join(terms, " ")
+	for len(out) > 0 && isFTSOperator(out[len(out)-1]) {
+		out = out[:len(out)-1]
+	}
+	if len(out) == 0 {
+		// The query contained only punctuation/operators; treat it literally.
+		return quoteFTSTerm(q)
+	}
+	return strings.Join(out, " ")
 }
 
+type ftsToken struct {
+	text   string
+	quoted bool
+}
+
+// tokenizeFTSQuery splits on whitespace while preserving quoted phrases.
+// Doubled quotes inside a phrase are unescaped; an unterminated quote is
+// treated as phrase content.
+func tokenizeFTSQuery(q string) []ftsToken {
+	tokens := make([]ftsToken, 0, 8)
+	var b strings.Builder
+	inQuote := false
+	flush := func(quoted bool) {
+		if b.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, ftsToken{text: b.String(), quoted: quoted})
+		b.Reset()
+	}
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		if inQuote {
+			if c == '"' {
+				if i+1 < len(q) && q[i+1] == '"' {
+					b.WriteByte('"')
+					i++
+					continue
+				}
+				inQuote = false
+				flush(true)
+				continue
+			}
+			b.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '"':
+			flush(false)
+			inQuote = true
+		case ' ', '\t', '\n', '\r':
+			flush(false)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	flush(inQuote)
+	return tokens
+}
+
+func quoteFTSTerm(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+func isFTSOperator(s string) bool {
+	switch s {
+	case "AND", "OR", "NOT", "NEAR":
+		return true
+	}
+	return false
+}

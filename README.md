@@ -27,6 +27,10 @@ Prerequisites: Go, Node/npm, Wails v2 CLI, and Linux WebView/GTK dependencies.
 go test ./...
 cd frontend && npm run build
 
+# Browser end-to-end tests (starts Vite automatically)
+cd frontend && npx playwright install chromium  # once per machine
+cd frontend && npm run test:e2e
+
 # Run the desktop app (requires a GUI/WebView environment)
 wails dev
 ```

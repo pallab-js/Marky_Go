@@ -18,6 +18,7 @@ export function MarkdownEditor({
 }) {
   const host = useRef<HTMLDivElement | null>(null);
   const view = useRef<EditorView | null>(null);
+  const syncing = useRef(false);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   onChangeRef.current = onChange;
@@ -38,7 +39,7 @@ export function MarkdownEditor({
           ...historyKeymap,
         ]),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+          if (u.docChanged && !syncing.current) onChangeRef.current(u.state.doc.toString());
         }),
         EditorView.lineWrapping,
         placeholder('Start writing Markdown…'),
@@ -64,7 +65,14 @@ export function MarkdownEditor({
     if (!v) return;
     const current = v.state.doc.toString();
     if (current !== value) {
-      v.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+      // Programmatic resync (external reload / note switch) must not be
+      // reported as a user edit, or it would schedule a phantom autosave.
+      syncing.current = true;
+      try {
+        v.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+      } finally {
+        syncing.current = false;
+      }
     }
   }, [value]);
 

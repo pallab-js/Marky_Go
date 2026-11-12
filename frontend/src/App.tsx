@@ -8,6 +8,12 @@ import { api, type NoteDocument, type SearchResult, type Settings, type TreeNode
 
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'conflict' | 'error';
+type SaveOutcome = 'clean' | 'saved' | 'conflict' | 'error';
+
+function withMarkdownExt(path: string): string {
+  const trimmed = path.trim();
+  return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
+}
 
 function flatten(nodes: TreeNode[], out: TreeNode[] = []): TreeNode[] {
   for (const n of nodes) {
@@ -22,9 +28,10 @@ function escapeHtml(s: string): string {
 }
 
 function renderSnippet(snippet: string): string {
-  // SQLite snippet() returns plain text with [ ] markers around matches.
+  // SQLite snippet() uses private-use markers so literal [brackets] in note
+  // text are not mistaken for search highlights.
   const safe = escapeHtml(snippet || '');
-  return safe.replace(/\[([^\]]*)\]/g, '<mark>$1</mark>');
+  return safe.replace(/\u0001([\s\S]*?)\u0002/g, '<mark>$1</mark>');
 }
 
 function TreeView({ nodes, selected, onSelect }: { nodes: TreeNode[]; selected?: string; onSelect: (n: TreeNode) => void }) {
@@ -65,13 +72,15 @@ function App() {
   const [conflictMsg, setConflictMsg] = useState('');
 
   const saveTimer = useRef<number | null>(null);
-  const savingRef = useRef(false);
-  const pendingRef = useRef(false);
+  const savePromise = useRef<Promise<SaveOutcome> | null>(null);
+  const searchSeq = useRef(0);
   const baseRef = useRef<NoteDocument | null>(null);
   const bufferRef = useRef('');
+  const queryRef = useRef('');
 
   baseRef.current = baseDoc;
   bufferRef.current = buffer;
+  queryRef.current = query;
 
   const fileCount = useMemo(() => flatten(tree).filter((n) => !n.isDir).length, [tree]);
   const dirty = baseDoc ? buffer !== baseDoc.content : false;
@@ -85,20 +94,26 @@ function App() {
 
   useEffect(() => {
     const q = query.trim();
+    const seq = ++searchSeq.current;
     if (!vault || !q) {
       setResults([]);
+      setSearching(false);
       return;
     }
     const t = setTimeout(async () => {
+      if (seq !== searchSeq.current) return;
       setSearching(true);
       try {
-        setResults(await api.search(q, { limit: 50 }));
+        const found = await api.search(q, { limit: 50 });
+        if (seq !== searchSeq.current) return;
+        setResults(found);
         setError('');
       } catch (e) {
+        if (seq !== searchSeq.current) return;
         setResults([]);
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setSearching(false);
+        if (seq === searchSeq.current) setSearching(false);
       }
     }, 220);
     return () => clearTimeout(t);
@@ -109,7 +124,8 @@ function App() {
     const off = EventsOn('vault:changed', async () => {
       try {
         setTree(await api.getTree());
-        if (query.trim()) setResults(await api.search(query.trim(), { limit: 50 }));
+        const q = queryRef.current.trim();
+        if (q) setResults(await api.search(q, { limit: 50 }));
         const doc = baseRef.current;
         if (doc) {
           const latest = await api.readNote(doc.path).catch(() => null);
@@ -144,65 +160,87 @@ function App() {
 
     });
     return () => { if (typeof off === 'function') off(); };
-  }, [vault, query]);
+  }, [vault]);
 
 
 
 
-  const doSave = useCallback(async (forceOverwrite = false) => {
+  const doSave = useCallback(async (forceOverwrite = false): Promise<SaveOutcome> => {
+    // Serialize saves: wait for an in-flight write, then re-evaluate the buffer.
+    if (savePromise.current) {
+      await savePromise.current.catch(() => {});
+      return doSave(forceOverwrite);
+    }
     const doc = baseRef.current;
     const content = bufferRef.current;
-    if (!doc) return;
+    if (!doc) return 'clean';
     if (!forceOverwrite && content === doc.content) {
       setSaveState('saved');
-      return;
+      return 'clean';
     }
-    if (savingRef.current) {
-      pendingRef.current = true;
-      return;
-    }
-    savingRef.current = true;
-    setSaveState('saving');
-    setError('');
+    const task = (async (): Promise<SaveOutcome> => {
+      setSaveState('saving');
+      setError('');
+      try {
+        const res = await api.writeNote(doc.path, content, doc.contentHash, doc.mtimeNs, doc.lineEnding, forceOverwrite);
+        if (res.conflict) {
+          setSaveState('conflict');
+          setConflictMsg(res.message || 'File changed on disk.');
+          setStatus(`Conflict: ${doc.path}`);
+          return 'conflict';
+        }
+        if (res.saved && res.document) {
+          setBaseDoc(res.document);
+          // Keep buffer as-is if the user kept typing while the save was in flight.
+          if (bufferRef.current === content) setSaveState('saved');
+          else setSaveState('dirty');
+          setConflictMsg('');
+          setStatus(`Saved ${doc.path}`);
+          return 'saved';
+        }
+        return 'clean';
+      } catch (e) {
+        setSaveState('error');
+        setError(e instanceof Error ? e.message : String(e));
+        return 'error';
+      }
+    })();
+    savePromise.current = task;
     try {
-      const res = await api.writeNote(doc.path, content, doc.contentHash, doc.mtimeNs, doc.lineEnding, forceOverwrite);
-      if (res.conflict) {
-        setSaveState('conflict');
-        setConflictMsg(res.message || 'File changed on disk.');
-        setStatus(`Conflict: ${doc.path}`);
-        return;
-      }
-      if (res.saved && res.document) {
-        setBaseDoc(res.document);
-        // Keep buffer as-is if user kept typing? compare
-        if (bufferRef.current === content) setSaveState('saved');
-        else setSaveState('dirty');
-        setConflictMsg('');
-        setStatus(`Saved ${doc.path}`);
-      }
-    } catch (e) {
-      setSaveState('error');
-      setError(e instanceof Error ? e.message : String(e));
+      return await task;
     } finally {
-      savingRef.current = false;
-      if (pendingRef.current) {
-        pendingRef.current = false;
-        void doSave(false);
-      }
+      if (savePromise.current === task) savePromise.current = null;
     }
   }, []);
 
   const scheduleSave = useCallback(() => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     const ms = Math.max(300, settings?.autosaveMs ?? 750);
-    saveTimer.current = window.setTimeout(() => void doSave(false), ms);
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null;
+      void doSave(false);
+    }, ms);
   }, [doSave, settings?.autosaveMs]);
+
+  // Flush pending edits before navigating away. Returns false when the write
+  // failed or needs conflict resolution, so callers can avoid losing the buffer.
+  const flushSave = useCallback(async (): Promise<boolean> => {
+    if (saveTimer.current) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const outcome = await doSave(false);
+    return outcome === 'clean' || outcome === 'saved';
+  }, [doSave]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (saveTimer.current) window.clearTimeout(saveTimer.current);
+        if (saveTimer.current) {
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
         void doSave(false);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
@@ -236,6 +274,8 @@ function App() {
   }
 
   async function openPath(path: string) {
+    // Do not abandon unsaved/conflicted edits when switching vaults.
+    if (!(await flushSave())) return;
     setIndexBusy(true);
     try {
       const info = await api.openVault(path);
@@ -256,9 +296,9 @@ function App() {
 
   async function selectNode(n: TreeNode) {
     if (n.isDir) return;
-    if (dirty && baseDoc) {
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      await doSave(false);
+    if (baseDoc && bufferRef.current !== baseDoc.content) {
+      // Abort navigation when the current note cannot be saved safely.
+      if (!(await flushSave())) return;
     }
     setError('');
     try {
@@ -387,11 +427,14 @@ function App() {
                 <button onClick={async () => {
                   if (!vault) return;
                   const name = window.prompt('New note path (e.g. Notes/Idea.md):');
-                  if (!name) return;
+                  if (!name?.trim()) return;
+                  const target = withMarkdownExt(name);
+                  if (!(await flushSave())) return;
                   try {
-                    const doc = await api.createNote(name.endsWith('.md') ? name : `${name}.md`, '# ' + name.replace(/\.md$/i, '').split('/').pop() + '\n');
+                    const title = target.replace(/\.md$/i, '').split('/').pop() || target;
+                    const doc = await api.createNote(target, '# ' + title + '\n');
                     setTree(await api.getTree());
-                    await selectNode({ name: name.split('/').pop() || name, path: doc.path, absPath: doc.absPath, isDir: false } as TreeNode);
+                    await selectNode({ name: target.split('/').pop() || target, path: doc.path, absPath: doc.absPath, isDir: false } as TreeNode);
                   } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
                 }}>New Note</button>
                 <button onClick={async () => {
@@ -429,20 +472,30 @@ function App() {
                 <div className="doc-title">{baseDoc.path}</div>
                 <div className="doc-actions">
                   <button onClick={async () => {
-                    const next = window.prompt('Rename/move path:', baseDoc.path);
-                    if (!next || next === baseDoc.path) return;
+                    const next = window.prompt('Rename/move path (.md added if omitted):', baseDoc.path);
+                    if (!next?.trim()) return;
+                    const target = withMarkdownExt(next);
+                    if (target === baseDoc.path) return;
+                    if (!(await flushSave())) return;
                     try {
-                      await api.renamePath(baseDoc.path, next);
-                      const d = await api.readNote(next.endsWith('.md') ? next : `${next}.md`);
+                      await api.renamePath(baseDoc.path, target);
+                      const d = await api.readNote(target);
                       setBaseDoc(d); setBuffer(d.content); setTree(await api.getTree()); setStatus(`Renamed to ${d.path}`);
                     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
                   }}>Rename</button>
                   <button className="danger" onClick={async () => {
                     const target = baseDoc.path;
                     if (!window.confirm(`Move "${target}" to OS trash? (No permanent delete fallback)`)) return;
+                    // Flush/clear any pending autosave so it cannot recreate the
+                    // file after it has been moved to the trash.
+                    if (saveTimer.current) {
+                      window.clearTimeout(saveTimer.current);
+                      saveTimer.current = null;
+                    }
+                    await doSave(false).catch(() => {});
                     try {
                       await api.deletePath(target);
-                      setBaseDoc(null); setBuffer(''); setTree(await api.getTree()); setStatus(`Moved to trash: ${target}`);
+                      setBaseDoc(null); setBuffer(''); setSaveState('idle'); setConflictMsg(''); setTree(await api.getTree()); setStatus(`Moved to trash: ${target}`);
                     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
                   }}>Delete</button>
 
