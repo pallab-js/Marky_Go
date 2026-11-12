@@ -22,7 +22,7 @@ async function selectFile(page: Page, name: string) {
 
 async function replaceDoc(page: Page, text: string) {
   await page.locator('.cm-content').click();
-  await page.keyboard.press('Meta+A');
+  await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type(text);
 }
 
@@ -78,7 +78,7 @@ test('deleting a note during an in-flight save does not recreate it', async ({ p
     (window as any).__mock.state.writeDelay = 700;
   });
   // Start a slow write, then delete before it lands.
-  await page.keyboard.press('Meta+S');
+  await page.keyboard.press('ControlOrMeta+S');
   page.once('dialog', (d) => d.accept());
   await page.getByRole('button', { name: 'Delete' }).click();
   await expect(page.locator('.tree-item.file', { hasText: 'Idea.md' })).toHaveCount(0);

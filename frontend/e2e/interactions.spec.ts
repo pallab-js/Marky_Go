@@ -19,7 +19,7 @@ async function selectFile(page: Page, name: string) {
 async function replaceDoc(page: Page, text: string) {
   const content = page.locator('.cm-content');
   await content.click();
-  await page.keyboard.press('Meta+A');
+  await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.type(text);
 }
 
